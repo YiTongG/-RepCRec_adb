@@ -88,7 +88,7 @@ class DatabaseSystem:
 
     def execute_test(self, commands: List[dict]):
         """Execute test commands"""
-        print("\nExecuting test commands...")
+        print("Executing commands...\n")
         for cmd in commands:
             command_type = cmd['command']
 
@@ -349,7 +349,7 @@ class DatabaseSystem:
                 self.rw_edges[active_tid].add(transaction_id)
 
         print(f"{transaction_id} read {item}={latest_version.value} "
-              f"(written by {latest_version.transaction_id}) from site {latest_site.site_id}")
+              f"(written by {latest_version.transaction_id}) ")
         return latest_version.value
 
     def write(self, transaction_id: str, item: str, value: any) -> bool:
@@ -476,7 +476,7 @@ class DatabaseSystem:
                 for op in transaction.operations:
                     if op.operation == Operation.READ:
                         item = op.item
-                        print(f"{transaction_id} is now able to complete read of {item}")
+                        # print(f"{transaction_id} is now able to complete read of {item}")
 
                         # check if the variable is replicated
                         var_index = int(item[1:])
@@ -501,7 +501,7 @@ class DatabaseSystem:
 
                         if latest_version:
                             print(f"{transaction_id} read {item}={latest_version.value} "
-                                  f"(written by {latest_version.transaction_id}) from site {latest_site.site_id}")
+                                  f"(written by {latest_version.transaction_id}) ")
 
                         else:
                             print(f"No valid version found for {item}")
@@ -539,8 +539,8 @@ class DatabaseSystem:
 
         # Execute write operations, but only write to appropriate sites
         commit_time = time.time()
-        affected_sites = []  # To store sites affected by each write for display
-
+        write_operations = {}  # Dictionary to store write values for each site
+        affected_sites = []  # List of sites affected by this transaction
         for op in transaction.operations:
             if op.operation == Operation.WRITE:
                 var = op.item
@@ -550,14 +550,16 @@ class DatabaseSystem:
                 target_sites = self._get_variable_sites(var)
                 for site in target_sites:
                     #print(site.site_id, op.timestamp, site.history.last_failure_time)
-                    # Only write to sites that are up and do not need write after recovery
                     if is_replicated:
                         if site.is_up and (var not in site.needs_write_after_recovery
                                            or op.timestamp > site.history.last_recovery_time):
                             site.data[var] = Version(op.version.value, commit_time, transaction_id)
                             site.last_commit_time[var] = commit_time
                             affected_sites.append(site.site_id)
-
+                            # Store the write value for this site
+                            if var not in write_operations:
+                                write_operations[var] = (op.version.value, [])
+                            write_operations[var][1].append(site.site_id)
                             # print(f"Written {var}={op.version.value} to site {site.site_id}")
 
                     else:  # Non-replicated variable
@@ -566,9 +568,14 @@ class DatabaseSystem:
                             site.last_commit_time[var] = commit_time
                             affected_sites.append(site.site_id)
                             # print(f"Written {var}={op.version.value} to site {site.site_id}")
+                            # Store the write value for this site
+                            if var not in write_operations:
+                                write_operations[var] = (op.version.value, [])
+                            write_operations[var][1].append(site.site_id)
 
-        if affected_sites:
-            print(f"Sites affected by writes for {transaction_id}: {', '.join(affected_sites)}")
+        if write_operations:
+            for var, (value, sites) in write_operations.items():
+                print(f"{transaction_id} writes {var}={value} to affect {', '.join(sites)}")
         committed_tx = CommittedTransaction(
             transaction_id=transaction_id,
             write_set=transaction.write_set.copy(),
@@ -577,7 +584,7 @@ class DatabaseSystem:
         )
         self.committed_transactions.append(committed_tx)
 
-        print(f"{transaction_id} commit")
+        print(f"{transaction_id} commit\n")
         del self.active_transactions[transaction_id]
         if transaction_id in self.waiting_transactions:
             del self.waiting_transactions[transaction_id]

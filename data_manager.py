@@ -74,6 +74,7 @@ class Site:
         """
         self.is_up = False
         self.history.record_failure(time.time())
+        print(f"{self.site_id} failed at {self.history.last_failure_time}")
         # Mark all replicated variables as needing a write after recovery
         self.needs_write_after_recovery = {var for var in self.data.keys()
                                            if int(var[1:]) % 2 == 0}
@@ -84,7 +85,7 @@ class Site:
         """
         self.is_up = True
         self.history.record_recovery(time.time())
-        print(f"Site {self.site_id} recovered at {self.history.last_recovery_time}")
+        print(f"{self.site_id} recovered at {self.history.last_recovery_time}")
         # Don't clear needs_write_after_recovery - wait for actual writes
 
     def can_serve_variable(self, variable: str) -> bool:

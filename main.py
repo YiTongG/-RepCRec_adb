@@ -42,7 +42,7 @@ def run_test(test_file):
         print(f"\ntesting: {test_file}")
         print("-" * 50)
         db.execute_test(commands)
-        db.print_system_state()
+        # db.print_system_state()
 
 
 def main():

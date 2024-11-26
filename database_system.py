@@ -61,6 +61,8 @@ def parse_test_commands(lines: List[str]) -> List[dict]:
                 'variable': var,
                 'value': value
             })
+        elif line.startswith('dump'):
+            commands.append({'command': 'dump'})
 
     return commands
 
@@ -114,6 +116,8 @@ class DatabaseSystem:
             elif command_type == 'write':
                 # print(f"\nW({cmd['transaction']},{cmd['variable']},{cmd['value']})")
                 self.write(cmd['transaction'], cmd['variable'], cmd['value'])
+            elif command_type == 'dump':
+                self.print_system_state()
 
             time.sleep(0.01)  #
 

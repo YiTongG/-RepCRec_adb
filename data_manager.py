@@ -122,7 +122,6 @@ class Transaction:
     def record_site_access(self, site_id: str, operation_type: str, variable: str = None):
         """Record that this transaction accessed a particular site
         operation_type: 'read' or 'write'
-        operation_type: 'read' or 'write'
         variable: the variable being accessed
         """
         self.accessed_sites.add(site_id)

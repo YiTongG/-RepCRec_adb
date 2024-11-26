@@ -1,5 +1,6 @@
 # Test case scenario:
 begin(T1)
-fail(2)
-R(T1,x8)
-recover(2)
+fail(4)
+R(T1,x3)
+recover(4)
+end(T1)

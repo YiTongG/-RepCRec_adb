@@ -247,6 +247,8 @@ class DatabaseSystem:
         """Read operation based on snapshot isolation and  concurrency control"""
 
         transaction = self.active_transactions[transaction_id]
+        is_retry = transaction_id in self.waiting_transactions
+
         # Check will_abort flag
         if transaction.will_abort:
             print(f"Transaction {transaction_id} marked for abort")
@@ -268,18 +270,18 @@ class DatabaseSystem:
 
             if is_replicated:
                 last_commit = site.last_commit_time.get(item, 0)
-                print(f"Last commit time for {item} at {site.site_id}: {last_commit}")
-                print(last_commit, read_timestamp, site.history.last_failure_time, site.history.last_recovery_time)
+                # print(f"Last commit time for {item} at {site.site_id}: {last_commit}")
+                # print(last_commit, read_timestamp, site.history.last_failure_time, site.history.last_recovery_time)
                 was_continuously_up = (site.history.last_failure_time == 0 or
 
-                                               (
-                                                       site.history.last_failure_time > read_timestamp and
-                                                       site.history.last_recovery_time <= last_commit)
-                                               )
+                                       (
+                                               site.history.last_failure_time > read_timestamp and
+                                               site.history.last_recovery_time <= last_commit)
+                                       )
 
                 if was_continuously_up:
                     valid_sites.append(site)
-                    print(f"Site {site.site_id} was continuously available")
+                    # print(f"Site {site.site_id} was continuously available")
             else:
                 valid_sites.append(site)
 
@@ -289,10 +291,12 @@ class DatabaseSystem:
 
         if not available_sites:
             down_valid_sites = [site for site in valid_sites if not site.is_up]
-            if down_valid_sites:
+            if down_valid_sites and not is_retry:
                 print(f"Transaction {transaction_id} is waiting for sites: {[s.site_id for s in down_valid_sites]}")
                 self.waiting_transactions[transaction_id].update([s.site_id for s in down_valid_sites])
                 op = Operation_Record(Operation.READ, item, time.time(), Version(-1, 0, "pending"))
+                transaction.operations.append(op)
+
                 return None
             else:
                 print(f"No available sites for {item}")
@@ -453,6 +457,7 @@ class DatabaseSystem:
     def commit(self, transaction_id: str) -> bool:
         """ commit operation with proper write handling"""
         transaction = self.active_transactions[transaction_id]
+        print(transaction.operations)
         print(f"\nProcessing end({transaction_id})...")
         # Check if transaction is marked for abort
         # Check site availability and pending reads
@@ -518,6 +523,38 @@ class DatabaseSystem:
                             site.last_commit_time[var] = commit_time
                             affected_sites.append(site.site_id)
                             # print(f"Written {var}={op.version.value} to site {site.site_id}")
+            elif op.operation == Operation.READ:
+                item = op.item
+                print(f"{transaction_id} is now able to complete read of {item}")
+
+                # check if the variable is replicated
+                var_index = int(item[1:])
+                is_replicated = var_index % 2 == 0
+                target_sites = list(self.sites.values()) if is_replicated else [
+                    self.sites[f"site{1 + (var_index % 10)}"]]
+                available_sites = [site for site in target_sites if site.is_up]
+
+                if not available_sites:
+                    print(f"Still no available sites for {item}")
+                    return False
+
+                # find the latest version
+                latest_version = None
+                latest_site = None
+                for site in available_sites:
+                    if item in site.data:
+                        version = site.data[item]
+                        if latest_version is None or version.timestamp > latest_version.timestamp:
+                            latest_version = version
+                            latest_site = site
+
+                if latest_version:
+                    print(f"{transaction_id} read {item}={latest_version.value} "
+                          f"(written by {latest_version.transaction_id}) from site {latest_site.site_id}")
+                else:
+                    print(f"No valid version found for {item}")
+                    return False
+
         if affected_sites:
             print(f"Sites affected by writes for {transaction_id}: {', '.join(affected_sites)}")
         committed_tx = CommittedTransaction(
@@ -535,7 +572,11 @@ class DatabaseSystem:
         return True
 
     def _abort_transaction(self, transaction_id: str):
-        """中止事务"""
+        """
+        abort the transaction
+        :param transaction_id:
+        :return:
+        """
         if transaction_id in self.active_transactions:
             del self.active_transactions[transaction_id]
         if transaction_id in self.rw_edges:

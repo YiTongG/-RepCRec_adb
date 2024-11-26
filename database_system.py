@@ -67,7 +67,7 @@ def parse_test_commands(lines: List[str]) -> List[dict]:
 
 def load_test_file(filename: str):
     """Load test cases from file"""
-    print(f"\nLoading test file: {filename}")
+    print(f"\n--------------------------------------------------")
     try:
         with open(filename, 'r') as file:
             return parse_test_commands(file.readlines())
@@ -151,7 +151,6 @@ class DatabaseSystem:
         INIT the database system
         :return:
         """
-        print("Initializing database system...")
 
         #
         for i in range(1, 11):
@@ -225,20 +224,25 @@ class DatabaseSystem:
                 if is_replicated:
                     has_available_site = False
                     for site in self.sites.values():
-                        if (site.is_up and
-                                site.can_serve_variable(var) and
-                                (site.history.last_failure_time == 0 or
-                                 site.history.last_failure_time < op.timestamp)):
+
+                        if site.is_up and (
+                                site.history.last_failure_time == 0 or
+                                (site.history.last_failure_time < op.timestamp and
+                                 site.history.last_recovery_time < op.timestamp)):
                             has_available_site = True
                             break
+
                     if not has_available_site:
+                        print(f"No available site for replicated variable {var}")
                         return False
                 else:
                     site_num = 1 + (var_index % 10)
                     site = self.sites[f"site{site_num}"]
-                    # If the site failed after the read operation, or has recovered, allow to continue
+
                     if (site.history.last_failure_time > op.timestamp and
-                            not site.is_up):
+                            (not site.is_up or
+                             site.history.last_recovery_time > op.timestamp)):
+                        print(f"Site {site_num} failed after read operation and hasn't properly recovered")
                         return False
 
         return True
@@ -261,7 +265,7 @@ class DatabaseSystem:
 
         # Get the sites that can serve the variable
         target_sites = list(self.sites.values()) if is_replicated else [self.sites[f"site{1 + (var_index % 10)}"]]
-        print(f"Target sites: {[s.site_id for s in target_sites]}")
+        # print(f"Target sites: {[s.site_id for s in target_sites]}")
 
         valid_sites = []
         for site in target_sites:
@@ -305,7 +309,7 @@ class DatabaseSystem:
 
         # If valid sites are found, clear the waiting status
         if transaction_id in self.waiting_transactions:
-            print(f"Clearing waiting status for transaction {transaction_id}")
+            # print(f"Clearing waiting status for transaction {transaction_id}")
             del self.waiting_transactions[transaction_id]
         # First find the initial version
         initial_value = 10 * int(item[1:])  # Calculate the initial value of the variable
@@ -450,14 +454,13 @@ class DatabaseSystem:
                     print(f"{transaction_id} is still waiting for site {site_id} to be up.")
                     return False
             # All required sites are up, so remove from waiting transactions and return True
-            print(f"All required sites for {transaction_id} are now up.")
+            # print(f"All required sites for {transaction_id} are now up.")
             del self.waiting_transactions[transaction_id]
             return True
 
     def commit(self, transaction_id: str) -> bool:
         """ commit operation with proper write handling"""
         transaction = self.active_transactions[transaction_id]
-        print(transaction.operations)
         print(f"\nProcessing end({transaction_id})...")
         # Check if transaction is marked for abort
         # Check site availability and pending reads
@@ -465,19 +468,52 @@ class DatabaseSystem:
         if transaction_id in self.waiting_transactions:
             if not self.check_waiting_transactions(transaction_id):
                 return False
+            else:
+                for op in transaction.operations:
+                    if op.operation == Operation.READ:
+                        item = op.item
+                        print(f"{transaction_id} is now able to complete read of {item}")
+
+                        # check if the variable is replicated
+                        var_index = int(item[1:])
+                        is_replicated = var_index % 2 == 0
+                        target_sites = list(self.sites.values()) if is_replicated else [
+                            self.sites[f"site{1 + (var_index % 10)}"]]
+                        available_sites = [site for site in target_sites if site.is_up]
+
+                        if not available_sites:
+                            print(f"Still no available sites for {item}")
+                            return False
+
+                        # find the latest version
+                        latest_version = None
+                        latest_site = None
+                        for site in available_sites:
+                            if item in site.data:
+                                version = site.data[item]
+                                if latest_version is None or version.timestamp > latest_version.timestamp:
+                                    latest_version = version
+                                    latest_site = site
+
+                        if latest_version:
+                            print(f"{transaction_id} read {item}={latest_version.value} "
+                                  f"(written by {latest_version.transaction_id}) from site {latest_site.site_id}")
+
+                        else:
+                            print(f"No valid version found for {item}")
 
         if transaction.will_abort:
-            print(f"Cannot commit {transaction_id}: marked for abort")
+            # print(f"Cannot commit {transaction_id}: marked for abort")
             self._abort_transaction(transaction_id)
             return False
 
         if not self._check_site_availability(transaction_id):
+            # print(f"{transaction_id} aborted due to site availability")
             self._abort_transaction(transaction_id)
             return False
 
         # Check waiting status
         if transaction_id in self.waiting_transactions and self.waiting_transactions[transaction_id]:
-            # print(f"{transaction_id} is still waiting for sites: {self.waiting_transactions[transaction_id]}")
             return False
 
         # Check the availability of the sites to be written
@@ -509,51 +545,23 @@ class DatabaseSystem:
 
                 target_sites = self._get_variable_sites(var)
                 for site in target_sites:
+                    #print(site.site_id, op.timestamp, site.history.last_failure_time)
                     # Only write to sites that are up and do not need write after recovery
                     if is_replicated:
-                        if site.is_up and var not in site.needs_write_after_recovery:
+                        if site.is_up and (var not in site.needs_write_after_recovery
+                                           or op.timestamp > site.history.last_recovery_time):
                             site.data[var] = Version(op.version.value, commit_time, transaction_id)
                             site.last_commit_time[var] = commit_time
                             affected_sites.append(site.site_id)
 
                             # print(f"Written {var}={op.version.value} to site {site.site_id}")
+
                     else:  # Non-replicated variable
                         if site.is_up:
                             site.data[var] = Version(op.version.value, commit_time, transaction_id)
                             site.last_commit_time[var] = commit_time
                             affected_sites.append(site.site_id)
                             # print(f"Written {var}={op.version.value} to site {site.site_id}")
-            elif op.operation == Operation.READ:
-                item = op.item
-                print(f"{transaction_id} is now able to complete read of {item}")
-
-                # check if the variable is replicated
-                var_index = int(item[1:])
-                is_replicated = var_index % 2 == 0
-                target_sites = list(self.sites.values()) if is_replicated else [
-                    self.sites[f"site{1 + (var_index % 10)}"]]
-                available_sites = [site for site in target_sites if site.is_up]
-
-                if not available_sites:
-                    print(f"Still no available sites for {item}")
-                    return False
-
-                # find the latest version
-                latest_version = None
-                latest_site = None
-                for site in available_sites:
-                    if item in site.data:
-                        version = site.data[item]
-                        if latest_version is None or version.timestamp > latest_version.timestamp:
-                            latest_version = version
-                            latest_site = site
-
-                if latest_version:
-                    print(f"{transaction_id} read {item}={latest_version.value} "
-                          f"(written by {latest_version.transaction_id}) from site {latest_site.site_id}")
-                else:
-                    print(f"No valid version found for {item}")
-                    return False
 
         if affected_sites:
             print(f"Sites affected by writes for {transaction_id}: {', '.join(affected_sites)}")
@@ -588,9 +596,9 @@ class DatabaseSystem:
     def print_system_state(self):
         """Prints the current system state with specified formatting."""
         print("\n=== Current System State ===")
-        for site_id, site in sorted(self.sites.items()):
+        for site_id, site in self.sites.items():
             if site.is_up:
-                data_str = ", ".join(f"{var}: {version.value}" for var, version in sorted(site.data.items()))
+                data_str = ", ".join(f"{var}: {version.value}" for var, version in site.data.items())
                 print(f"site {site_id} – {data_str}")
             else:
                 print(f"site {site_id} – DOWN")

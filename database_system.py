@@ -376,7 +376,13 @@ class DatabaseSystem:
         for site in available_sites:
             transaction.record_site_access(site.site_id, 'write')
             transaction.sites_written.add(site.site_id)
-
+        # Attempt to write to current available sites
+        # affected_sites = []
+        # for site in available_sites:
+        #     transaction.record_site_access(site.site_id, 'write')
+        #     transaction.sites_written.add(site.site_id)
+        #     affected_sites.append(site.site_id)
+        print(f"{transaction_id} wants to write {item}={value} ")
         # Update read-write dependencies
         for active_tid, active_trans in self.active_transactions.items():
             if active_tid != transaction_id and item in active_trans.read_set:

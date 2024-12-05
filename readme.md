@@ -17,9 +17,15 @@ ReproZip is used to ensure the reproducibility of your test runs.
    ```bash
    reprounzip directory run ./example
    ```
+   it contains 28 tests checking using info from reprounzip
+   ```bash
+   reprounzip  info  repro-test.rpz
+   ```
+   from course website under the `test` directory. 
+   The running result will show up in the terminal.
 
+The script `main.py` supports identifying test and showing the result in the terminal.
 
-The script `main.py` supports the following arguments:
 
 ### Running Tests
 1. **Default Run**  
@@ -29,7 +35,7 @@ The script `main.py` supports the following arguments:
    ```
 
 2. **Run Tests in a Specific Directory**  
-   Specify a directory to run tests:  
+   Specify a directory to run tests:  default is `test`
    ```bash
    python3 main.py --test-dir <TEST_DIR>
    ```
